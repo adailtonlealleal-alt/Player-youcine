@@ -2,78 +2,98 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
+<title>Player Seguro</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Player YC - Colar Link</title>
-
 <style>
-    body {
-        margin: 0;
-        background: #111;
-        color: white;
-        font-family: Arial;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding: 20px;
-    }
-
-    input {
-        width: 95%;
-        padding: 12px;
-        border-radius: 8px;
-        border: none;
-        margin-bottom: 10px;
-        font-size: 15px;
-    }
-
-    button {
-        width: 95%;
-        padding: 12px;
-        border-radius: 8px;
-        border: none;
-        background: #0a84ff;
-        color: white;
-        font-size: 16px;
-        cursor: pointer;
-    }
-
-    video {
-        width: 100%;
-        margin-top: 20px;
-        background: black;
+    body { background: #000; margin: 0; }
+    video { width: 100vw; height: 100vh; background: #000; }
+    #loading {
+        position: fixed; top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: #000; color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px;
     }
 </style>
-
 </head>
 <body>
 
-<h2>Player YouCine - Cole o link abaixo</h2>
-
-<input type="text" id="link" placeholder="Cole aqui o link do YouCine...">
-<button onclick="playVideo()">Reproduzir</button>
-
-<div id="playerContainer"></div>
+<div id="loading">Carregando vídeo…</div>
+<video id="video" controls autoplay></video>
 
 <script>
-function playVideo() {
-    const url = document.getElementById("link").value.trim();
-
-    if (!url) {
-        alert("Cole um link válido!");
+(async () => {
+    const hash = decodeURIComponent(location.hash.substring(1));
+    if (!hash) {
+        alert("Nenhum link encontrado na URL.");
         return;
     }
 
-    // Cria o player com o link colado
-    document.getElementById("playerContainer").innerHTML = `
-        <video
-            src="${url}"
-            controls
-            autoplay
-            playsinline
-            controlsList="nodownload noremoteplayback"
-        ></video>
-    `;
-}
+    const video = document.getElementById("video");
+
+    // Detecta se é HLS (.m3u8)
+    const isHLS = hash.includes(".m3u8");
+
+    // 1) HLS-DOWNLOADER invisível (segmentos ficam em cache local)
+    async function preloadHLS(url) {
+        try {
+            const m3u8 = await fetch(url);
+            const text = await m3u8.text();
+
+            const lines = text.split("\n")
+                .filter(l => l.trim() && !l.startsWith("#"));
+
+            const base = url.split("/").slice(0, -1).join("/");
+
+            // Baixa segmentos silenciosamente para cache local
+            for (const seg of lines) {
+                fetch(base + "/" + seg).catch(()=>{});
+            }
+
+        } catch (e) {
+            console.log("Falha no preloader:", e);
+        }
+    }
+
+    // 2) Usa HLS.js se for m3u8
+    if (isHLS) {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
+        script.onload = async () => {
+
+            // Pré-carrega invisível (salva segmentação do filme)
+            preloadHLS(hash);
+
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    maxBufferLength: 60,
+                    maxMaxBufferLength: 120,
+                    liveSyncDuration: 30
+                });
+                hls.loadSource(hash);
+                hls.attachMedia(video);
+                video.oncanplay = () => {
+                    document.getElementById("loading").style.display = "none";
+                    video.play();
+                };
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = hash;
+                video.addEventListener("loadedmetadata", () => {
+                    document.getElementById("loading").style.display = "none";
+                    video.play();
+                });
+            }
+        };
+        document.body.appendChild(script);
+
+    } else {
+        // Se for MP4 direto, só roda
+        video.src = hash;
+        video.addEventListener("loadedmetadata", () => {
+            document.getElementById("loading").style.display = "none";
+        });
+    }
+})();
 </script>
 
 </body>
